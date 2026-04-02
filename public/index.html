@@ -4,7 +4,36 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Witness — Last Mile Alert System</title>
-  <script src="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js">
+/* Voice recording using Web Speech API */
+let recognition = null, isRecording = false;
+function toggleVoiceRecording() {
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    showToast('Voice recognition not supported'); return;
+  }
+  isRecording ? stopVoiceRecording() : startVoiceRecording();
+}
+function startVoiceRecording() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRecognition();
+  recognition.continuous = false; recognition.interimResults = true; recognition.lang = 'en-US';
+  const voiceBtn = document.getElementById('voice-btn'), voiceStatus = document.getElementById('voice-status'), voiceIcon = document.getElementById('voice-icon');
+  recognition.onstart = () => { isRecording = true; voiceBtn.style.background = '#dc2626'; voiceStatus.textContent = 'Listening...'; };
+  recognition.onresult = (e) => {
+    const transcript = Array.from(e.results).map(r => r[0].transcript).join('');
+    document.getElementById('incident-message').value = transcript;
+    if (e.results[0].isFinal) {
+      voiceStatus.textContent = 'Got it!';
+      setTimeout(() => { voiceStatus.textContent = ''; isRecording = false; voiceBtn.style.background = ''; recognition.stop(); }, 1000);
+    }
+  };
+  recognition.onerror = (e) => { console.error(e); voiceStatus.textContent = 'Error: '+e.error; isRecording = false; voiceBtn.style.background = ''; };
+  recognition.onend = () => { isRecording = false; voiceBtn.style.background = ''; if (voiceStatus.textContent === 'Listening...') voiceStatus.textContent = ''; };
+  recognition.start();
+}
+function stopVoiceRecording() { if (recognition) recognition.stop(); }
+
+</script>
   <link href="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.css" rel="stylesheet" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -477,7 +506,9 @@
       border: 1px solid var(--border) !important;
     }
     .maplibregl-popup-tip { border-top-color: var(--panel-solid) !important; }
-  </style>
+      /* Cluster count badge */
+    .cluster-marker { width: 24px !important; height: 24px !important; border-radius: 50% !important; border: 3px solid white !important; position: relative !important; }
+</style>
 </head>
 <body>
   <div id="map"></div>
@@ -588,7 +619,26 @@
 
       <div class="form-group">
         <label>What's happening?</label>
-        <textarea id="incident-message" placeholder="Describe what you see..."></textarea>
+        <div style="display: flex; gap: 8px; align-items: flex-start;">
+          <textarea id="incident-message" placeholder="Describe what you see..." style="flex: 1;"></textarea>
+          <button type="button" id="voice-btn" onclick="toggleVoiceRecording()" style="
+            background: var(--orange);
+            border: none;
+            border-radius: 8px;
+            padding: 10px 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 44px;
+            transition: all 0.15s;
+          ">
+            <svg id="voice-icon" viewBox="0 0 24 24" width="18" height="18" fill="white">
+              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.66 9 5v6c0 1.66 1.34 3 3 3zm-1-9c0-.55.45-1 1-1s1 .45 1 1v6c0 .55-.45 1-1 1s-1-.45-1-1V5zm6 6c0 2.21-1.79 4-4 4s-4-1.79-4-4H5c0 3.31 2.69 6 6 6s6-2.69 6-6h-2z"/>
+            </svg>
+          </button>
+        </div>
+        <div id="voice-status" style="font-size: 11px; color: var(--orange); margin-top: 4px; height: 16px;"></div>
       </div>
 
       <div id="location-picker-section">
@@ -831,24 +881,28 @@
     }
 
     function renderMarkers() {
-      markers.forEach(m => m.remove());
-      markers = [];
+      markers.forEach(m => m.remove()); markers = [];
       const active = incidents.filter(i => i.status === 'active');
       active.forEach(inc => {
         const color = typeColors[inc.type] || typeColors.other;
+        const count = inc.reports?.length || 0;
         const el = document.createElement('div');
-        el.className = 'incident-marker';
-        el.style.background = color;
-        el.style.boxShadow = `0 0 12px ${color}60`;
-        const pseudoStyle = document.createElement('style');
-        pseudoStyle.textContent = `.incident-marker[data-id="${inc.id}"]::after { border-color: ${color}; }`;
-        document.head.appendChild(pseudoStyle);
+        el.className = 'incident-marker cluster-marker';
+        el.style.background = color; el.style.boxShadow = `0 0 12px ${color}60`;
+        if (count > 1) {
+          const badge = document.createElement('div');
+          badge.style.cssText = `position:absolute;top:-6px;right:-6px;background:white;color:${color};border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,0.2);border:2px solid white;`;
+          badge.textContent = count;
+          el.appendChild(badge);
+        }
+        const pseudo = document.createElement('style');
+        pseudo.textContent = `.incident-marker[data-id="${inc.id}"]::after { border-color: ${color}; }`;
+        document.head.appendChild(pseudo);
         el.dataset.id = inc.id;
         el.addEventListener('click', () => openSidebar(inc));
         el.addEventListener('mouseenter', (e) => showTooltip(e, inc));
         el.addEventListener('mouseleave', hideTooltip);
-        const marker = new maplibregl.Marker({ element: el }).setLngLat([inc.lng, inc.lat]).addTo(map);
-        markers.push(marker);
+        markers.push(new maplibregl.Marker({ element: el }).setLngLat([inc.lng, inc.lat]).addTo(map));
       });
     }
 
@@ -1018,46 +1072,26 @@
      }
 
      async function submitReport() {
-       const type = document.getElementById('incident-type').value;
-       const location = document.getElementById('incident-location').value.trim();
-       const message = document.getElementById('incident-message').value.trim();
-       const lat = parseFloat(document.getElementById('incident-lat').value);
-       const lng = parseFloat(document.getElementById('incident-lng').value);
-       const existingIncidentId = document.getElementById('existing-incident').value;
-
-       if (!location || !message || isNaN(lat) || isNaN(lng)) {
-         showToast('Please fill in all fields and pick a location');
-         return;
-       }
-
-       const btn = document.getElementById('submit-btn');
-       btn.disabled = true;
-       btn.textContent = 'Sending...';
-
-       try {
-         const res = await fetch(`${API}/report`, {
-           method: 'POST',
-           headers: { 'Content-Type': 'application/json' },
-           body: JSON.stringify({ type, location, message, lat, lng, incidentId: existingIncidentId || undefined }),
-         });
-         const data = await res.json();
-         showToast(`Alert sent — ${data.reports?.length} report(s) on this incident`);
-         closeModal();
-         loadIncidents();
-       } catch {
-         showToast('Failed to send report');
-       } finally {
-         btn.disabled = false;
-         btn.textContent = 'Send Alert';
-       }
-     }
-
-    // Toast
-    function showToast(msg) {
-      const t = document.getElementById('toast');
-      t.textContent = msg;
-      t.classList.add('show');
-      setTimeout(() => t.classList.remove('show'), 3000);
+      const submitBtn = document.getElementById('submit-btn');
+      submitBtn.disabled = true; submitBtn.textContent = 'Sending...';
+      const type = document.getElementById('incident-type').value;
+      const location = document.getElementById('incident-location').value.trim();
+      const message = document.getElementById('incident-message').value.trim();
+      const lat = parseFloat(document.getElementById('incident-lat').value);
+      const lng = parseFloat(document.getElementById('incident-lng').value);
+      if (!location || !message || isNaN(lat) || isNaN(lng)) {
+        showToast('Please fill all required fields'); submitBtn.disabled = false; submitBtn.textContent = 'Send Alert'; return;
+      }
+      try {
+        const payload = { message, lat, lng, type, location };
+        const res = await fetch(`${API}/report`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!res.ok) throw new Error('Failed');
+        const result = await res.json();
+        closeModal(); loadIncidents();
+        if (result.grouped && result.matchedDistance) showToast(`✓ Auto-grouped (${Math.round(result.matchedDistance)}m)`);
+        else showToast('Reported successfully');
+      } catch { showToast('Failed'); }
+      finally { submitBtn.disabled = false; submitBtn.textContent = 'Send Alert'; }
     }
 
     function timeAgo(ts) {
@@ -1074,6 +1108,35 @@
     document.getElementById('modal-overlay').addEventListener('click', e => {
       if (e.target === document.getElementById('modal-overlay')) closeModal();
     });
-  </script>
+  
+/* Voice recording using Web Speech API */
+let recognition = null, isRecording = false;
+function toggleVoiceRecording() {
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    showToast('Voice recognition not supported'); return;
+  }
+  isRecording ? stopVoiceRecording() : startVoiceRecording();
+}
+function startVoiceRecording() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRecognition();
+  recognition.continuous = false; recognition.interimResults = true; recognition.lang = 'en-US';
+  const voiceBtn = document.getElementById('voice-btn'), voiceStatus = document.getElementById('voice-status'), voiceIcon = document.getElementById('voice-icon');
+  recognition.onstart = () => { isRecording = true; voiceBtn.style.background = '#dc2626'; voiceStatus.textContent = 'Listening...'; };
+  recognition.onresult = (e) => {
+    const transcript = Array.from(e.results).map(r => r[0].transcript).join('');
+    document.getElementById('incident-message').value = transcript;
+    if (e.results[0].isFinal) {
+      voiceStatus.textContent = 'Got it!';
+      setTimeout(() => { voiceStatus.textContent = ''; isRecording = false; voiceBtn.style.background = ''; recognition.stop(); }, 1000);
+    }
+  };
+  recognition.onerror = (e) => { console.error(e); voiceStatus.textContent = 'Error: '+e.error; isRecording = false; voiceBtn.style.background = ''; };
+  recognition.onend = () => { isRecording = false; voiceBtn.style.background = ''; if (voiceStatus.textContent === 'Listening...') voiceStatus.textContent = ''; };
+  recognition.start();
+}
+function stopVoiceRecording() { if (recognition) recognition.stop(); }
+
+</script>
 </body>
 </html>
