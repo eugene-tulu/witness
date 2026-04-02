@@ -130,8 +130,8 @@
       backdrop-filter: blur(16px);
       transition: all 0.15s;
     }
-    .map-ctrl-btn:hover { background: rgba(255,255,255,0.1); }
-    .map-ctrl-btn.active { background: var(--red); border-color: var(--red); }
+    .map-ctrl-btn:hover { background: rgba(0,0,0,0.06); }
+    .map-ctrl-btn.active { background: var(--red); border-color: var(--red); color: white; }
 
     /* ── Feed toggle ── */
     #feed-toggle {
@@ -191,7 +191,7 @@
       cursor: pointer;
       transition: all 0.15s;
     }
-    .feed-item:hover { background: rgba(255,255,255,0.1); }
+    .feed-item:hover { background: rgba(0,0,0,0.04); }
     .feed-item-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
     .feed-type-badge {
       font-size: 10px; font-weight: 600; text-transform: uppercase;
@@ -317,16 +317,17 @@
     /* ── Report modal ── */
     #modal-overlay {
       position: absolute; inset: 0;
-      background: rgba(0,0,0,0.65); z-index: 200;
+      background: rgba(0,0,0,0.35); z-index: 200;
       display: none; align-items: center; justify-content: center;
       backdrop-filter: blur(4px);
     }
     #modal-overlay.open { display: flex; }
     #modal {
-      background: #14141f;
+      background: #ffffff;
       border: 1px solid var(--border);
       border-radius: 16px; padding: 28px;
       width: 440px; max-width: 92vw; max-height: 90vh; overflow-y: auto;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.12);
     }
     #modal h2 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
     #modal > p { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
@@ -346,7 +347,7 @@
     .form-group input:focus,
     .form-group select:focus,
     .form-group textarea:focus { border-color: rgba(255,68,68,0.5); }
-    .form-group select option { background: #14141f; }
+    .form-group select option { background: #ffffff; }
     .form-group textarea { resize: none; height: 70px; }
     .form-row { display: flex; gap: 10px; }
     .form-row .form-group { flex: 1; }
@@ -409,9 +410,10 @@
 
     /* ── Incident markers ── */
     .incident-marker {
-      width: 16px; height: 16px; border-radius: 50%;
-      border: 2px solid white; cursor: pointer;
+      width: 18px; height: 18px; border-radius: 50%;
+      border: 3px solid white; cursor: pointer;
       position: relative;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.25);
     }
     .incident-marker::after {
       content: ''; position: absolute; inset: -6px;
@@ -439,11 +441,12 @@
     #toast {
       position: absolute; bottom: 90px; left: 50%;
       transform: translateX(-50%) translateY(16px);
-      background: #1e1e30; border: 1px solid var(--border);
+      background: #ffffff; border: 1px solid var(--border);
       border-radius: 10px; padding: 10px 18px;
       font-size: 13px; z-index: 300;
       opacity: 0; transition: all 0.25s;
       pointer-events: none; white-space: nowrap;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.1);
     }
     #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
@@ -639,11 +642,11 @@
     let searchTimeout = null;
 
     const typeColors = {
-      fire: '#ff8c00',
-      flood: '#0096ff',
-      accident: '#ffc800',
-      security: '#ff4444',
-      other: '#b0b0b0',
+      fire: '#dc2626',
+      flood: '#1d4ed8',
+      accident: '#d97706',
+      security: '#dc2626',
+      other: '#6b7280',
     };
 
     const typeEmojis = { fire: '🔥', flood: '🌊', accident: '🚗', security: '🚨', other: '⚠️' };
@@ -654,14 +657,14 @@
       style: {
         version: 8,
         sources: {
-          'carto-dark': {
+          'carto-light': {
             type: 'raster',
-            tiles: ['https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'],
+            tiles: ['https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'],
             tileSize: 256,
             attribution: 'CartoDB / OpenStreetMap',
           }
         },
-        layers: [{ id: 'carto-dark', type: 'raster', source: 'carto-dark' }]
+        layers: [{ id: 'carto-light', type: 'raster', source: 'carto-light' }]
       },
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
