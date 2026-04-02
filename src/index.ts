@@ -34,10 +34,65 @@ interface IncidentState {
   narrative: string;
 }
 
-// ─── Incident Durable Object ──────────────────────────────────────────────────
+// ─── Utilities ────────────────────────────────────────────────────────────────
+
+// Calculate distance between two points in meters using Haversine formula
+function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371e3; // Earth's radius in meters
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lng2 - lng1) * Math.PI / 180;
+
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c;
+}
+
+// Find the nearest active incident of a given type within GROUPING_RADIUS meters
+async function findNearestIncident(
+  env: Env,
+  lat: number,
+  lng: number,
+  type: string,
+  radius: number = 150
+): Promise<{doId: any; incidentId: string} | null> {
+  const list = await env.INCIDENTS_KV.list({ prefix: "incident:" });
+  if (list.keys.length === 0) return null;
+
+  // Fetch all incident data in parallel (cast to any for TypeScript)
+  const incidents = await Promise.all(
+    list.keys.map(key => env.INCIDENTS_KV.get(key.name, "json") as any)
+  );
+
+  let nearest: {distance: number; doId: any; incidentId: string} | null = null;
+
+  for (const incident of incidents) {
+    if (!incident || incident.status !== "active" || incident.type !== type) continue;
+
+    const distance = haversineDistance(lat, lng, incident.lat, incident.lng);
+    if (distance <= radius) {
+      if (!nearest || distance < nearest.distance) {
+        nearest = {
+          distance,
+          doId: env.INCIDENT.idFromString(incident.doId),
+          incidentId: incident.id,
+        };
+      }
+    }
+  }
+
+  return nearest;
+}
+
+ // ─── Incident Durable Object ──────────────────────────────────────────────────
 
 export class IncidentObject extends DurableObject<Env> {
   private state: IncidentState | null = null;
+  private readonly GROUPING_RADIUS = 150; // meters
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -54,23 +109,7 @@ export class IncidentObject extends DurableObject<Env> {
     await this.ctx.storage.put("incident", state);
   }
 
-  // Calculate distance between two points in meters using Haversine formula
-   private haversineDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
-     const R = 6371e3; // Earth's radius in meters
-     const φ1 = lat1 * Math.PI / 180;
-     const φ2 = lat2 * Math.PI / 180;
-     const Δφ = (lat2 - lat1) * Math.PI / 180;
-     const Δλ = (lng2 - lng1) * Math.PI / 180;
-
-     const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-               Math.cos(φ1) * Math.cos(φ2) *
-               Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-     return R * c;
-   }
-
-   // Called when a new report comes in
+    // Called when a new report comes in
    async addReport(report: Omit<Report, "id" | "confirmed">, incidentMeta: { type: string; location: string }): Promise<IncidentState> {
      let state = await this.getState();
 
@@ -80,50 +119,45 @@ export class IncidentObject extends DurableObject<Env> {
        confirmed: false,
      };
 
-     if (!state) {
-       // First report — create the incident
-       state = {
-         id: crypto.randomUUID(),
-         type: incidentMeta.type,
-         location: incidentMeta.location,
-         lat: report.lat,
-         lng: report.lng,
-         reports: [newReport],
-         status: "active",
-         createdAt: Date.now(),
-         updatedAt: Date.now(),
-         broadcastCount: 0,
-         narrative: report.message,
-       };
+      if (!state) {
+        // First report — create the incident
+        state = {
+          id: crypto.randomUUID(),
+          type: incidentMeta.type,
+          location: incidentMeta.location,
+          lat: report.lat,
+          lng: report.lng,
+          reports: [newReport],
+          status: "active",
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          broadcastCount: 0,
+          narrative: report.message,
+        };
 
-       // Set alarm to auto-expire incident after 2 hours
-       await this.ctx.storage.setAlarm(Date.now() + 2 * 60 * 60 * 1000);
-     } else {
-       // Check if the new report is within 100 meters of the existing incident
-       const distance = this.haversineDistance(state.lat, state.lng, report.lat, report.lng);
-       const sameType = state.type === incidentMeta.type;
-       
-       if (distance <= 100 && sameType) {
-         // Group with existing incident
-         state.reports.push(newReport);
-         state.updatedAt = Date.now();
-         state.narrative = await this.buildNarrative(state);
-         
-         // Update location to be the average of all reports (optional)
-         const totalLat = state.reports.reduce((sum, r) => sum + r.lat, 0);
-         const totalLng = state.reports.reduce((sum, r) => sum + r.lng, 0);
-         state.lat = totalLat / state.reports.length;
-         state.lng = totalLng / state.reports.length;
-       } else {
-         // Create a new incident (different type or too far away)
-         // In a real implementation, we would need to handle this differently
-         // For now, we'll just add the report to the current incident
-         // A more complex solution would involve checking nearby incidents
-         state.reports.push(newReport);
-         state.updatedAt = Date.now();
-         state.narrative = await this.buildNarrative(state);
-       }
-     }
+        // Set alarm to auto-expire incident after 2 hours
+        await this.ctx.storage.setAlarm(Date.now() + 2 * 60 * 60 * 1000);
+      } else {
+        // Check if the new report is within GROUPING_RADIUS and same type
+        const distance = haversineDistance(state.lat, state.lng, report.lat, report.lng);
+        const sameType = state.type === incidentMeta.type;
+        
+        if (distance <= this.GROUPING_RADIUS && sameType) {
+          // Group with existing incident
+          state.reports.push(newReport);
+          state.updatedAt = Date.now();
+          state.narrative = await this.buildNarrative(state);
+          
+          // Update location to be the average of all reports (centroid)
+          const totalLat = state.reports.reduce((sum, r) => sum + r.lat, 0);
+          const totalLng = state.reports.reduce((sum, r) => sum + r.lng, 0);
+          state.lat = totalLat / state.reports.length;
+          state.lng = totalLng / state.reports.length;
+        } else {
+          // Report does not belong to this incident
+          throw new Error("Report does not match incident type or is outside grouping radius");
+        }
+      }
 
      await this.saveState(state);
 
@@ -193,6 +227,11 @@ export class IncidentObject extends DurableObject<Env> {
   // Synthesize voice via ElevenLabs TTS and store in R2
   private async synthesizeVoice(text: string, incidentId: string): Promise<string | null> {
     try {
+      if (!this.env.ELEVENLABS_API_KEY) {
+        console.error('ELEVENLABS_API_KEY is not set');
+        return null;
+      }
+
       const response = await fetch(
         `https://api.elevenlabs.io/v1/text-to-speech/${this.env.ELEVENLABS_VOICE_ID}`,
         {
@@ -212,7 +251,11 @@ export class IncidentObject extends DurableObject<Env> {
         }
       );
 
-      if (!response.ok) return null;
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('ElevenLabs API error:', response.status, errorText);
+        return null;
+      }
 
       const audioBuffer = await response.arrayBuffer();
       const key = `alerts/${incidentId}/${Date.now()}.mp3`;
@@ -221,7 +264,8 @@ export class IncidentObject extends DurableObject<Env> {
       });
 
       return key;
-    } catch {
+    } catch (err) {
+      console.error('Failed to synthesize voice:', err);
       return null;
     }
   }
@@ -235,12 +279,15 @@ export class IncidentObject extends DurableObject<Env> {
 
     const audioKey = await this.synthesizeVoice(alertText, state.id);
 
-    state.broadcastCount += 1;
     if (audioKey) {
+      state.broadcastCount += 1;
       // Store the latest audio key on the state so the frontend can stream it
       (state as any).latestAudioKey = audioKey;
+      await this.saveState(state);
+    } else {
+      console.error(`Voice broadcast failed for incident ${state.id} (no audio key)`);
+      // Do NOT increment broadcastCount so we will retry on next report
     }
-    await this.saveState(state);
   }
 
   private async broadcastResolution(state: IncidentState): Promise<void> {
@@ -271,7 +318,7 @@ export default {
       return new Response(null, { headers: cors });
     }
 
-    // POST /report — submit a new incident report
+     // POST /report — submit a new incident report
     if (path === "/report" && request.method === "POST") {
       try {
         const body = await request.json() as {
@@ -283,16 +330,51 @@ export default {
           incidentId?: string;
         };
 
-        // Use provided incidentId (to group reports) or create new
-        const doId = body.incidentId
-          ? env.INCIDENT.idFromString(body.incidentId)
-          : env.INCIDENT.newUniqueId();
+        let doId: DurableObjectId;
+        let stub: any; // Will hold the DurableObjectStub
+        let createdNew = false;
 
-        const stub = env.INCIDENT.get(doId);
-        const state = await stub.addReport(
-          { message: body.message, lat: body.lat, lng: body.lng, timestamp: Date.now() },
-          { type: body.type, location: body.location }
-        );
+        if (body.incidentId) {
+          // Manual grouping: use provided incidentId
+          doId = env.INCIDENT.idFromString(body.incidentId);
+        } else {
+          // Auto-group: find nearest active incident of same type within 150m
+          const nearest = await findNearestIncident(env, body.lat, body.lng, body.type, 150);
+          if (nearest) {
+            doId = nearest.doId;
+          } else {
+            // No matching incident — create new
+            doId = env.INCIDENT.newUniqueId();
+            createdNew = true;
+          }
+        }
+
+        stub = env.INCIDENT.get(doId);
+
+        let state: IncidentState;
+        try {
+          state = await stub.addReport(
+            { message: body.message, lat: body.lat, lng: body.lng, timestamp: Date.now() },
+            { type: body.type, location: body.location }
+          );
+        } catch (err: any) {
+          // If addReport rejected due to type/location mismatch, create a new incident instead
+          if (err.message === "Report does not match incident type or is outside grouping radius") {
+            if (!body.incidentId && !createdNew) {
+              // We auto-selected an incident but it didn't match; create a new one
+              doId = env.INCIDENT.newUniqueId();
+              stub = env.INCIDENT.get(doId);
+              state = await stub.addReport(
+                { message: body.message, lat: body.lat, lng: body.lng, timestamp: Date.now() },
+                { type: body.type, location: body.location }
+              );
+            } else {
+              throw err;
+            }
+          } else {
+            throw err;
+          }
+        }
 
         // Cache incident in KV for map listing
         await env.INCIDENTS_KV.put(
