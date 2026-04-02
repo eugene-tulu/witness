@@ -568,16 +568,23 @@
       <h2>Report an Incident</h2>
       <p>Your report will alert people nearby in real time.</p>
 
-      <div class="form-group">
-        <label>Incident Type</label>
-        <select id="incident-type">
-          <option value="fire">Fire</option>
-          <option value="flood">Flood</option>
-          <option value="accident">Accident</option>
-          <option value="security">Security Threat</option>
-          <option value="other">Other</option>
-        </select>
-      </div>
+       <div class="form-group">
+         <label>Incident Type</label>
+         <select id="incident-type">
+           <option value="fire">Fire</option>
+           <option value="flood">Flood</option>
+           <option value="accident">Accident</option>
+           <option value="security">Security Threat</option>
+           <option value="other">Other</option>
+         </select>
+       </div>
+       
+       <div class="form-group" id="incident-group-section">
+         <label>Group with Existing Incident</label>
+         <select id="existing-incident">
+           <option value="">-- Create New Incident --</option>
+         </select>
+       </div>
 
       <div class="form-group">
         <label>What's happening?</label>
@@ -964,58 +971,86 @@
     }
 
     // Modal
-    function openModal() {
-      modalOpen = true;
-      document.getElementById('modal-overlay').classList.add('open');
-    }
+     async function openModal() {
+       modalOpen = true;
+       document.getElementById('modal-overlay').classList.add('open');
+       
+       // Load existing active incidents for grouping
+       try {
+         const res = await fetch(`${API}/incidents`);
+         const incidents = await res.json();
+         const activeIncidents = incidents.filter(i => i.status === 'active');
+         
+         const incidentSelect = document.getElementById('existing-incident');
+         incidentSelect.innerHTML = '<option value="">-- Create New Incident --</option>';
+         
+         if (activeIncidents.length > 0) {
+           document.getElementById('incident-group-section').style.display = 'block';
+           activeIncidents.forEach(inc => {
+             const option = document.createElement('option');
+             option.value = inc.id;
+             option.textContent = `${inc.type} at ${inc.location} (${inc.reports?.length || 0} reports)`;
+             incidentSelect.appendChild(option);
+           });
+         } else {
+           document.getElementById('incident-group-section').style.display = 'none';
+         }
+       } catch (e) {
+         console.error('Failed to load incidents for grouping', e);
+         document.getElementById('incident-group-section').style.display = 'none';
+       }
+     }
 
-    function closeModal() {
-      modalOpen = false;
-      document.getElementById('modal-overlay').classList.remove('open');
-      if (pickPin) { pickPin.remove(); pickPin = null; }
-      pickCoords = null;
-      document.getElementById('picked-coords').textContent = '';
-      document.getElementById('incident-lat').value = '';
-      document.getElementById('incident-lng').value = '';
-      document.getElementById('incident-location').value = '';
-      document.getElementById('incident-message').value = '';
-      document.getElementById('location-search').value = '';
-      document.getElementById('search-results').innerHTML = '';
-    }
+     function closeModal() {
+       modalOpen = false;
+       document.getElementById('modal-overlay').classList.remove('open');
+       if (pickPin) { pickPin.remove(); pickPin = null; }
+       pickCoords = null;
+       document.getElementById('picked-coords').textContent = '';
+       document.getElementById('incident-lat').value = '';
+       document.getElementById('incident-lng').value = '';
+       document.getElementById('incident-location').value = '';
+       document.getElementById('incident-message').value = '';
+       document.getElementById('location-search').value = '';
+       document.getElementById('search-results').innerHTML = '';
+       document.getElementById('existing-incident').value = '';
+       document.getElementById('incident-group-section').style.display = 'none';
+     }
 
-    async function submitReport() {
-      const type = document.getElementById('incident-type').value;
-      const location = document.getElementById('incident-location').value.trim();
-      const message = document.getElementById('incident-message').value.trim();
-      const lat = parseFloat(document.getElementById('incident-lat').value);
-      const lng = parseFloat(document.getElementById('incident-lng').value);
+     async function submitReport() {
+       const type = document.getElementById('incident-type').value;
+       const location = document.getElementById('incident-location').value.trim();
+       const message = document.getElementById('incident-message').value.trim();
+       const lat = parseFloat(document.getElementById('incident-lat').value);
+       const lng = parseFloat(document.getElementById('incident-lng').value);
+       const existingIncidentId = document.getElementById('existing-incident').value;
 
-      if (!location || !message || isNaN(lat) || isNaN(lng)) {
-        showToast('Please fill in all fields and pick a location');
-        return;
-      }
+       if (!location || !message || isNaN(lat) || isNaN(lng)) {
+         showToast('Please fill in all fields and pick a location');
+         return;
+       }
 
-      const btn = document.getElementById('submit-btn');
-      btn.disabled = true;
-      btn.textContent = 'Sending...';
+       const btn = document.getElementById('submit-btn');
+       btn.disabled = true;
+       btn.textContent = 'Sending...';
 
-      try {
-        const res = await fetch(`${API}/report`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type, location, message, lat, lng }),
-        });
-        const data = await res.json();
-        showToast(`Alert sent — ${data.reports?.length} report(s) on this incident`);
-        closeModal();
-        loadIncidents();
-      } catch {
-        showToast('Failed to send report');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Send Alert';
-      }
-    }
+       try {
+         const res = await fetch(`${API}/report`, {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({ type, location, message, lat, lng, incidentId: existingIncidentId || undefined }),
+         });
+         const data = await res.json();
+         showToast(`Alert sent — ${data.reports?.length} report(s) on this incident`);
+         closeModal();
+         loadIncidents();
+       } catch {
+         showToast('Failed to send report');
+       } finally {
+         btn.disabled = false;
+         btn.textContent = 'Send Alert';
+       }
+     }
 
     // Toast
     function showToast(msg) {

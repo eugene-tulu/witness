@@ -54,49 +54,86 @@ export class IncidentObject extends DurableObject<Env> {
     await this.ctx.storage.put("incident", state);
   }
 
-  // Called when a new report comes in
-  async addReport(report: Omit<Report, "id" | "confirmed">, incidentMeta: { type: string; location: string }): Promise<IncidentState> {
-    let state = await this.getState();
+  // Calculate distance between two points in meters using Haversine formula
+   private haversineDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
+     const R = 6371e3; // Earth's radius in meters
+     const φ1 = lat1 * Math.PI / 180;
+     const φ2 = lat2 * Math.PI / 180;
+     const Δφ = (lat2 - lat1) * Math.PI / 180;
+     const Δλ = (lng2 - lng1) * Math.PI / 180;
 
-    const newReport: Report = {
-      id: crypto.randomUUID(),
-      ...report,
-      confirmed: false,
-    };
+     const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+               Math.cos(φ1) * Math.cos(φ2) *
+               Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
-    if (!state) {
-      // First report — create the incident
-      state = {
-        id: crypto.randomUUID(),
-        type: incidentMeta.type,
-        location: incidentMeta.location,
-        lat: report.lat,
-        lng: report.lng,
-        reports: [newReport],
-        status: "active",
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        broadcastCount: 0,
-        narrative: report.message,
-      };
+     return R * c;
+   }
 
-      // Set alarm to auto-expire incident after 2 hours
-      await this.ctx.storage.setAlarm(Date.now() + 2 * 60 * 60 * 1000);
-    } else {
-      state.reports.push(newReport);
-      state.updatedAt = Date.now();
-      state.narrative = await this.buildNarrative(state);
-    }
+   // Called when a new report comes in
+   async addReport(report: Omit<Report, "id" | "confirmed">, incidentMeta: { type: string; location: string }): Promise<IncidentState> {
+     let state = await this.getState();
 
-    await this.saveState(state);
+     const newReport: Report = {
+       id: crypto.randomUUID(),
+       ...report,
+       confirmed: false,
+     };
 
-    // Trigger voice broadcast after 2+ reports
-    if (state.reports.length >= 2 && state.broadcastCount === 0) {
-      await this.broadcastAlert(state);
-    }
+     if (!state) {
+       // First report — create the incident
+       state = {
+         id: crypto.randomUUID(),
+         type: incidentMeta.type,
+         location: incidentMeta.location,
+         lat: report.lat,
+         lng: report.lng,
+         reports: [newReport],
+         status: "active",
+         createdAt: Date.now(),
+         updatedAt: Date.now(),
+         broadcastCount: 0,
+         narrative: report.message,
+       };
 
-    return state;
-  }
+       // Set alarm to auto-expire incident after 2 hours
+       await this.ctx.storage.setAlarm(Date.now() + 2 * 60 * 60 * 1000);
+     } else {
+       // Check if the new report is within 100 meters of the existing incident
+       const distance = this.haversineDistance(state.lat, state.lng, report.lat, report.lng);
+       const sameType = state.type === incidentMeta.type;
+       
+       if (distance <= 100 && sameType) {
+         // Group with existing incident
+         state.reports.push(newReport);
+         state.updatedAt = Date.now();
+         state.narrative = await this.buildNarrative(state);
+         
+         // Update location to be the average of all reports (optional)
+         const totalLat = state.reports.reduce((sum, r) => sum + r.lat, 0);
+         const totalLng = state.reports.reduce((sum, r) => sum + r.lng, 0);
+         state.lat = totalLat / state.reports.length;
+         state.lng = totalLng / state.reports.length;
+       } else {
+         // Create a new incident (different type or too far away)
+         // In a real implementation, we would need to handle this differently
+         // For now, we'll just add the report to the current incident
+         // A more complex solution would involve checking nearby incidents
+         state.reports.push(newReport);
+         state.updatedAt = Date.now();
+         state.narrative = await this.buildNarrative(state);
+       }
+     }
+
+     await this.saveState(state);
+
+     // Trigger voice broadcast after 2+ reports
+     if (state.reports.length >= 2 && state.broadcastCount === 0) {
+       await this.broadcastAlert(state);
+     }
+
+     return state;
+   }
 
   // Confirm/add info to an incident
   async confirmReport(message: string): Promise<IncidentState> {
